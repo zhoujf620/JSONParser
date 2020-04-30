@@ -4,7 +4,8 @@ A lightweight JSON parser writen in C.
 
 ## TODO
 
-- [ ] Add functionality of parsing null and boolean types.
+- [x] Add functionality of parsing null and boolean types.
+- [x] Add functionality of parsing the number type.
 
 ## Reference
 
