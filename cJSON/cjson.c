@@ -1,3 +1,8 @@
+  
+#ifdef _WINDOWS
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#endif
 #include "cjson.h"
 #include <assert.h>  /* assert() */
 #include <errno.h>   /* errno, ERANGE */
@@ -78,8 +83,43 @@ static int cjson_parse_number(cjson_context* c, cjson_value* v) {
     return CJSON_PARSE_OK;
 }
 
+static const char* cjson_parse_hex4(const char* p, unsigned* u) {
+    *u = 0;
+    for (int i = 0; i < 4; ++i) {
+        char ch = *p++;
+        *u <<= 4;
+        if      (ch >= '0' && ch <= '9') *u |= ch - '0';
+        else if (ch >= 'A' && ch <= 'F') *u |= ch - ('A' - 10);
+        else if (ch >= 'a' && ch <= 'f') *u |= ch - ('a' - 10);
+        else return NULL;
+    }
+    return p;
+}
+
+static void cjson_encode_utf8(cjson_context* c, unsigned u) {
+    if (u <= 0x7F) 
+        cjson_context_push(c, u & 0xFF);
+    else if (u <= 0x7FF) {
+        cjson_context_push(c, 0xC0 | ((u >> 6) & 0xFF));
+        cjson_context_push(c, 0x80 | ( u       & 0x3F));
+    }
+    else if (u <= 0xFFFF) {
+        cjson_context_push(c, 0xE0 | ((u >> 12) & 0xFF));
+        cjson_context_push(c, 0x80 | ((u >>  6) & 0x3F));
+        cjson_context_push(c, 0x80 | ( u        & 0x3F));
+    }
+    else {
+        assert(u <= 0x10FFFF);
+        cjson_context_push(c, 0xF0 | ((u >> 18) & 0xFF));
+        cjson_context_push(c, 0x80 | ((u >> 12) & 0x3F));
+        cjson_context_push(c, 0x80 | ((u >>  6) & 0x3F));
+        cjson_context_push(c, 0x80 | ( u        & 0x3F));
+    }
+}
+
 static int cjson_parse_string(cjson_context* c, cjson_value* v) {
     size_t head = c->top, len;
+    unsigned u, u2;
 
     const char* p = c->json;
     if (p[0] != ('\"')) return CJSON_PARSE_INVALID_VALUE;
@@ -102,6 +142,32 @@ static int cjson_parse_string(cjson_context* c, cjson_value* v) {
                 case 'n': cjson_context_push(c, '\n'); break;
                 case 'r': cjson_context_push(c, '\r'); break;
                 case 't': cjson_context_push(c, '\t'); break;
+                case 'u': 
+                    if (!(p = cjson_parse_hex4(p, &u))) {
+                        c->top = head;
+                        return CJSON_PARSE_INVALID_UNICODE_HEX;
+                    }
+                    if (u >= 0xD800 && u <= 0xDBFF) { /* surrogate pair */
+                        if (*p++ != '\\') {
+                            c->top = head;
+                            return CJSON_PARSE_INVALID_UNICODE_SURROGATE;
+                        }
+                        if (*p++ != 'u') {
+                            c->top = head;
+                            return CJSON_PARSE_INVALID_UNICODE_SURROGATE;
+                        }
+                        if (!(p = cjson_parse_hex4(p, &u2))) {
+                            c->top = head;
+                            return CJSON_PARSE_INVALID_UNICODE_HEX;
+                        }
+                        if (u2 < 0xDC00 || u2 > 0xDFFF) {
+                            c->top = head;
+                            return CJSON_PARSE_INVALID_UNICODE_SURROGATE;
+                        }
+                        u = ((u - 0xD800) << 10 | (u2 - 0xDC00)) + 0x10000;
+                    }
+                    cjson_encode_utf8(c, u);
+                    break;
                 default:
                     c->top = head;
                     return CJSON_PARSE_INVALID_STRING_ESCAPE;
