@@ -51,6 +51,7 @@ enum {
 #define cjson_init(v) do {(v)->type = CJSON_NULL;} while(0)
 
 int cjson_parse(cjson_value* v, const char* json);
+char* cjson_stringify(const cjson_value* v, size_t* length);
 
 void cjson_free(cjson_value* v);
 

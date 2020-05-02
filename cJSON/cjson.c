@@ -6,10 +6,15 @@
 #include <assert.h>  /* assert() */
 #include <errno.h>   /* errno, ERANGE */
 #include <math.h>    /* HUGE_VAL */
+#include <stdio.h>   /* sprintf() */
 #include <stdlib.h>  /* NULL, malloc(), realloc(), free(), strtod() */
 #include <string.h>  /* memcpy() */
 
+#define PUTC(c, ch)         do { *(char*)lept_context_push(c, sizeof(char)) = (ch); } while(0)
+#define PUTS(c, s, len)     memcpy(lept_context_push(c, len), s, len)
+
 const static int CJSON_PARSE_STACK_INIT_SIZE = 256;
+const static int CJSON_PARSE_STRINGIFY_INIT_SIZE = 256;
 
 typedef struct {
     const char* json;
@@ -35,6 +40,10 @@ static void* cjson_context_push(cjson_context* c, size_t size) {
 static void cjson_context_push_char(cjson_context* c, char ch) {
     char* p = cjson_context_push(c, sizeof(char));
     *p = ch;
+}
+
+static void cjson_context_push_str(cjson_context* c, const char* s, const int len) {
+    memcpy(cjson_context_push(c, len), s, len);
 }
 
 static void* cjson_context_pop(cjson_context* c, size_t size) {
@@ -365,6 +374,80 @@ int cjson_parse(cjson_value* v, const char* json) {
     assert(c.top == 0);
     free(c.stack);
     return ret;
+}
+
+static void cjson_stringify_string(cjson_context* c, const char* s, size_t len) {
+    static const char hex_digits[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+    assert(s != NULL);
+    size_t size;
+    char* head, *p;
+    p = head = cjson_context_push(c, size = len * 6 + 2); /* "\u00xx..." */
+    
+    *p++ = '"';
+    for (size_t i = 0; i < len; ++i) {
+        unsigned char ch = (unsigned char)s[i];
+        switch (ch) {
+            case '\"': *p++ = '\\'; *p++ = '\"'; break;
+            case '\\': *p++ = '\\'; *p++ = '\\'; break;
+            case '\b': *p++ = '\\'; *p++ = 'b';  break;
+            case '\f': *p++ = '\\'; *p++ = 'f';  break;
+            case '\n': *p++ = '\\'; *p++ = 'n';  break;
+            case '\r': *p++ = '\\'; *p++ = 'r';  break;
+            case '\t': *p++ = '\\'; *p++ = 't';  break;
+            default:
+                if (ch < 0x20) {
+                    *p++ = '\\'; *p++ = 'u'; *p++ = '0'; *p++ = '0';
+                    *p++ = hex_digits[ch >> 4];
+                    *p++ = hex_digits[ch & 15];
+                }
+                else
+                    *p++ = s[i];
+        }
+    }
+    *p++ = '"';
+    c->top -= size - (p - head);
+}
+
+static void cjson_stringify_value(cjson_context* c, const cjson_value* v) {
+    switch (v->type) {
+        case CJSON_NULL:   cjson_context_push_str(c, "null", 4); break;
+        case CJSON_FALSE:  cjson_context_push_str(c, "false", 5); break;
+        case CJSON_TRUE:   cjson_context_push_str(c, "true", 4); break;
+        case CJSON_NUMBER: c->top -= 32 - sprintf(cjson_context_push(c, 32), "%.17g", v->data.num); break;
+        case CJSON_STRING: cjson_stringify_string(c, v->data.str.s, v->data.str.len); break;
+        case CJSON_ARRAY:
+            cjson_context_push_char(c, '[');
+            for (size_t i = 0; i < v->data.arr.size; i++) {
+                if (i > 0)
+                    cjson_context_push_char(c, ',');
+                cjson_stringify_value(c, &v->data.arr.elem[i]);
+            }
+            cjson_context_push_char(c, ']');
+            break;
+        case CJSON_OBJECT:
+            cjson_context_push_char(c, '{');
+            for (size_t i = 0; i < v->data.obj.size; i++) {
+                if (i > 0)
+                    cjson_context_push_char(c, ',');
+                cjson_stringify_string(c, v->data.obj.memb[i].k, v->data.obj.memb[i].klen);
+                cjson_context_push_char(c, ':');
+                cjson_stringify_value(c, &v->data.obj.memb[i].v);
+            }
+            cjson_context_push_char(c, '}');
+            break;            
+        default: assert(0 && "invalid type");
+    }
+}
+
+char* cjson_stringify(const cjson_value* v, size_t* len) {
+    cjson_context c;
+    assert(v != NULL);
+    c.stack = (char*)malloc(c.size = CJSON_PARSE_STRINGIFY_INIT_SIZE);
+    c.top = 0;
+    cjson_stringify_value(&c, v);
+    if (len) *len = c.top;
+    cjson_context_push_char(&c, '\0');
+    return c.stack;
 }
 
 void cjson_free(cjson_value* v) {
