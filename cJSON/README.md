@@ -11,6 +11,7 @@ A lightweight JSON parser writen in C.
 - [x] Add functionality of parsing the array type.
 - [x] Add functionality of parsing the object type.
 - [x] Add functionality of JSON generator.
+- [x] Add functionality of accessing and others.
 
 ## Reference
 

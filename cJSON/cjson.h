@@ -13,16 +13,18 @@ typedef enum {
     CJSON_OBJECT
 } cjson_type;
 
+#define CJSON_KEY_NOT_EXIST ((size_t)-1)
+
 typedef struct cjson_value cjson_value;
 typedef struct cjson_member cjson_member;
 
 struct cjson_value {
     union {
-        struct {cjson_member* memb; size_t size;} obj;
-        struct {cjson_value* elem; size_t size;} arr; /* array:  elements, element count */
-        struct {char* s; size_t len;} str;           /* string: null-terminated string, string length */
-        double num;                                   /* number */
-    } data;
+        struct {cjson_member* memb; size_t size, capacity;} obj; /* object: members, member count, capacity */
+        struct {cjson_value*  elem; size_t size, capacity;} arr; /* array:  elements, element count, capacity */
+        struct {char* s; size_t len;} str;                   /* string: null-terminated string, string length */
+        double num;                                           /* number */
+    }data;
     cjson_type type;
 };
 
@@ -53,9 +55,14 @@ enum {
 int cjson_parse(cjson_value* v, const char* json);
 char* cjson_stringify(const cjson_value* v, size_t* length);
 
+void cjson_copy(cjson_value* dst, const cjson_value* src);
+void cjson_move(cjson_value* dst, cjson_value* src);
+void cjson_swap(cjson_value* lhs, cjson_value* rhs);
+
 void cjson_free(cjson_value* v);
 
 cjson_type cjson_get_type(const cjson_value* v);
+int cjson_is_equal(const cjson_value* lhs, const cjson_value* rhs);
 
 void cjson_set_null(cjson_value* v);
 
@@ -69,12 +76,30 @@ const char* cjson_get_string(const cjson_value* v);
 size_t cjson_get_string_length(const cjson_value* v);
 void cjson_set_string(cjson_value* v, const char* s, size_t len);
 
+void cjson_set_array(cjson_value* v, size_t capacity);
 size_t cjson_get_array_size(const cjson_value* v);
-const cjson_value* cjson_get_array_element(const cjson_value* v, size_t index);
+size_t cjson_get_array_capacity(const cjson_value* v);
+void cjson_reserve_array(cjson_value* v, size_t capacity);
+void cjson_shrink_array(cjson_value* v);
+void cjson_clear_array(cjson_value* v);
+cjson_value* cjson_get_array_element(cjson_value* v, size_t index);
+cjson_value* cjson_pushback_array_element(cjson_value* v);
+void cjson_popback_array_element(cjson_value* v);
+cjson_value* cjson_insert_array_element(cjson_value* v, size_t index);
+void cjson_erase_array_element(cjson_value* v, size_t index, size_t count);
 
+void cjson_set_object(cjson_value* v, size_t capacity);
 size_t cjson_get_object_size(const cjson_value* v);
+size_t cjson_get_object_capacity(const cjson_value* v);
+void cjson_reserve_object(cjson_value* v, size_t capacity);
+void cjson_shrink_object(cjson_value* v);
+void cjson_clear_object(cjson_value* v);
 const char* cjson_get_object_key(const cjson_value* v, size_t index);
 size_t cjson_get_object_key_length(const cjson_value* v, size_t index);
-cjson_value* cjson_get_object_value(const cjson_value* v, size_t index);
+cjson_value* cjson_get_object_value(cjson_value* v, size_t index);
+size_t cjson_find_object_index(const cjson_value* v, const char* key, size_t klen);
+cjson_value* cjson_find_object_value(cjson_value* v, const char* key, size_t klen);
+cjson_value* cjson_set_object_value(cjson_value* v, const char* key, size_t klen);
+void cjson_remove_object_value(cjson_value* v, size_t index);
 
 #endif

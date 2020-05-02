@@ -10,8 +10,8 @@
 #include <stdlib.h>  /* NULL, malloc(), realloc(), free(), strtod() */
 #include <string.h>  /* memcpy() */
 
-#define PUTC(c, ch)         do { *(char*)lept_context_push(c, sizeof(char)) = (ch); } while(0)
-#define PUTS(c, s, len)     memcpy(lept_context_push(c, len), s, len)
+#define PUTC(c, ch)         do { *(char*)cjson_context_push(c, sizeof(char)) = (ch); } while(0)
+#define PUTS(c, s, len)     memcpy(cjson_context_push(c, len), s, len)
 
 const static int CJSON_PARSE_STACK_INIT_SIZE = 256;
 const static int CJSON_PARSE_STRINGIFY_INIT_SIZE = 256;
@@ -220,9 +220,7 @@ static int cjson_parse_array(cjson_context* c, cjson_value* v) {
     cjson_parse_whitespace(c);
     if (*c->json == ']') {
         c->json++;
-        v->type = CJSON_ARRAY;
-        v->data.arr.size = 0;
-        v->data.arr.elem = NULL;
+        cjson_set_array(v, 0);
         return CJSON_PARSE_OK;
     }
 
@@ -242,13 +240,10 @@ static int cjson_parse_array(cjson_context* c, cjson_value* v) {
             cjson_parse_whitespace(c);
         }
         else if (*c->json == ']') {
-            size_t s = sizeof(cjson_value) * size;
-
             c->json++;
-            v->type = CJSON_ARRAY;
+            cjson_set_array(v, size);
             v->data.arr.size = size;
-            size *= sizeof(cjson_value);
-            memcpy(v->data.arr.elem = (cjson_value*)malloc(s), cjson_context_pop(c, s), s);
+            memcpy(v->data.arr.elem, cjson_context_pop(c, sizeof(cjson_value) * size),sizeof(cjson_value) * size);
             return CJSON_PARSE_OK;
         }
         else {
@@ -269,9 +264,7 @@ static int cjson_parse_object(cjson_context* c, cjson_value* v) {
     cjson_parse_whitespace(c);
     if (*c->json == '}') {
         c->json++;
-        v->type = CJSON_OBJECT;
-        v->data.obj.memb = 0;
-        v->data.obj.size = 0;
+        cjson_set_object(v, 0);
         return CJSON_PARSE_OK;
     }
 
@@ -316,11 +309,10 @@ static int cjson_parse_object(cjson_context* c, cjson_value* v) {
             cjson_parse_whitespace(c);
         }
         else if (*c->json == '}') {
-            size_t s = sizeof(cjson_member) * size;
             c->json++;
-            v->type = CJSON_OBJECT;
+            cjson_set_object(v, size);
             v->data.obj.size = size;
-            memcpy(v->data.obj.memb = (cjson_member*)malloc(s), cjson_context_pop(c, s), s);
+            memcpy(v->data.obj.memb, cjson_context_pop(c, sizeof(cjson_member) * size), sizeof(cjson_member) * size);
             return CJSON_PARSE_OK;
         }
         else {
@@ -450,6 +442,56 @@ char* cjson_stringify(const cjson_value* v, size_t* len) {
     return c.stack;
 }
 
+void cjson_copy(cjson_value* dst, const cjson_value* src) {
+    assert(src != NULL && dst != NULL && src != dst);
+    switch (src->type) {
+        case CJSON_STRING:
+            cjson_set_string(dst, src->data.str.s, src->data.str.len);
+            break;
+        case CJSON_ARRAY:
+            cjson_set_array(dst, src->data.arr.size);
+            for(size_t i = 0; i < src->data.arr.size; ++i) {
+                cjson_init(dst->data.arr.elem + i);
+                cjson_copy(dst->data.arr.elem + i, src->data.arr.elem + i);
+            }
+            dst->data.arr.size = src->data.arr.size;
+            break;
+        case CJSON_OBJECT:
+            cjson_set_object(dst, src->data.obj.size);
+            for(size_t i = 0; i < src->data.obj.size; ++i) {
+                dst->data.obj.memb[i].klen = src->data.obj.memb[i].klen;
+                dst->data.obj.memb[i].k = (char*)malloc(dst->data.obj.memb[i].klen + 1);
+                memcpy(dst->data.obj.memb[i].k, src->data.obj.memb[i].k, dst->data.obj.memb[i].klen);
+                dst->data.obj.memb[i].k[dst->data.obj.memb[i].klen] = '\0';
+                cjson_init(&dst->data.obj.memb[i].v);
+                cjson_copy(&dst->data.obj.memb[i].v, &src->data.obj.memb[i].v);
+            }
+            dst->data.obj.size = src->data.obj.size;
+            break;
+        default:
+            cjson_free(dst);
+            memcpy(dst, src, sizeof(cjson_value));
+            break;
+    }
+}
+
+void cjson_move(cjson_value* dst, cjson_value* src) {
+    assert(dst != NULL && src != NULL && src != dst);
+    cjson_free(dst);
+    memcpy(dst, src, sizeof(cjson_value));
+    cjson_init(src);
+}
+
+void cjson_swap(cjson_value* lhs, cjson_value* rhs) {
+    assert(lhs != NULL && rhs != NULL);
+    if (lhs != rhs) {
+        cjson_value temp;
+        memcpy(&temp, lhs, sizeof(cjson_value));
+        memcpy(lhs,   rhs, sizeof(cjson_value));
+        memcpy(rhs, &temp, sizeof(cjson_value));
+    }
+}
+
 void cjson_free(cjson_value* v) {
     assert(v != NULL);
     switch (v->type) {
@@ -476,6 +518,37 @@ void cjson_free(cjson_value* v) {
 cjson_type cjson_get_type(const cjson_value* v) {
     assert(v != NULL);
     return v->type;
+}
+
+int cjson_is_equal(const cjson_value* lhs, const cjson_value* rhs) {
+    assert(lhs != NULL && rhs != NULL);
+    if (lhs->type != rhs->type)
+        return 0;
+    switch (lhs->type) {
+        case CJSON_STRING:
+            return lhs->data.str.len == rhs->data.str.len && 
+                memcmp(lhs->data.str.s, rhs->data.str.s, lhs->data.str.len) == 0;
+        case CJSON_NUMBER:
+            return lhs->data.num == rhs->data.num;
+        case CJSON_ARRAY:
+            if (lhs->data.arr.size != rhs->data.arr.size)
+                return 0;
+            for (size_t i = 0; i < lhs->data.arr.size; ++i)
+                if (!cjson_is_equal(&lhs->data.arr.elem[i], &rhs->data.arr.elem[i]))
+                    return 0;
+            return 1;
+        case CJSON_OBJECT:
+            if (lhs->data.obj.size != rhs->data.obj.size)
+                return 0;
+            for (size_t i = 0; i < lhs->data.obj.size; ++i){
+                size_t index = cjson_find_object_index(rhs, lhs->data.obj.memb[i].k, lhs->data.obj.memb[i].klen);
+                if (index == CJSON_KEY_NOT_EXIST || !cjson_is_equal(&lhs->data.obj.memb[i].v, &rhs->data.obj.memb[index].v))
+                    return 0;
+            }
+            return 1;
+        default:
+            return 1;
+    }
 }
 
 void cjson_set_null(cjson_value* v) {
@@ -523,20 +596,133 @@ void cjson_set_string(cjson_value* v, const char* s, size_t len) {
     v->type = CJSON_STRING;
 }
 
+void cjson_set_array(cjson_value* v, size_t capacity) {
+    assert(v != NULL);
+    cjson_free(v);
+    v->type = CJSON_ARRAY;
+    v->data.arr.size = 0;
+    v->data.arr.capacity = capacity;
+    v->data.arr.elem = capacity > 0 ? (cjson_value*)malloc(capacity * sizeof(cjson_value)) : NULL;
+}
+
 size_t cjson_get_array_size(const cjson_value* v) {
     assert(v != NULL && v->type == CJSON_ARRAY);
     return v->data.arr.size;
 }
 
-const cjson_value* cjson_get_array_element(const cjson_value* v, size_t index) {
+size_t cjson_get_array_capacity(const cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    return v->data.arr.capacity;
+}
+
+void cjson_reserve_array(cjson_value* v, size_t capacity) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    if (v->data.arr.capacity < capacity) {
+        v->data.arr.capacity = capacity;
+        v->data.arr.elem = (cjson_value*)realloc(v->data.arr.elem, capacity * sizeof(cjson_value));
+    }
+}
+
+void cjson_shrink_array(cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    if (v->data.arr.capacity > v->data.arr.size) {
+        v->data.arr.capacity = v->data.arr.size;
+        v->data.arr.elem = (cjson_value*)realloc(v->data.arr.elem, v->data.arr.capacity * sizeof(cjson_value));
+    }
+}
+
+void cjson_clear_array(cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    cjson_erase_array_element(v, 0, v->data.arr.size);
+}
+
+cjson_value* cjson_get_array_element(cjson_value* v, size_t index) {
     assert(v != NULL && v->type == CJSON_ARRAY);
     assert(index < v->data.arr.size);
     return &v->data.arr.elem[index];
 }
 
+cjson_value* cjson_pushback_array_element(cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    if (v->data.arr.size == v->data.arr.capacity)
+        cjson_reserve_array(v, v->data.arr.capacity == 0 ? 1 : v->data.arr.capacity * 2);
+    cjson_init(&v->data.arr.elem[v->data.arr.size]);
+    return &v->data.arr.elem[v->data.arr.size++];
+}
+
+void cjson_popback_array_element(cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_ARRAY && v->data.arr.size > 0);
+    cjson_free(&v->data.arr.elem[--v->data.arr.size]);
+}
+
+cjson_value* cjson_insert_array_element(cjson_value* v, size_t index) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    assert(index <= v->data.arr.size);   /* if index == size, then this's equivalent to pushback*/
+    if (v->data.arr.size == v->data.arr.capacity) {
+        cjson_reserve_array(v, v->data.arr.capacity == 0 ? 1 : v->data.arr.capacity * 2);
+    }
+    for(size_t i = v->data.arr.size++; i > index; --i) {
+        v->data.arr.elem[i] = v->data.arr.elem[i - 1];
+    }
+    return &v->data.arr.elem[index]; 
+}
+
+void cjson_erase_array_element(cjson_value* v, size_t index, size_t count) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    assert(index + count <= v->data.arr.size);
+    if(!count) return;
+    for(size_t i = index; i < index + count; ++i) {
+        cjson_free(&v->data.arr.elem[i]);
+        v->data.arr.elem[i] = v->data.arr.elem[i + count];
+    }
+    for(size_t i = index + count; i < v->data.arr.size; ++i) {
+        v->data.arr.elem[i] = v->data.arr.elem[i + count];
+    }
+    v->data.arr.size -= count;
+}
+
+void cjson_set_object(cjson_value* v, size_t capacity) {
+    assert(v != NULL);
+    cjson_free(v);
+    v->type = CJSON_OBJECT;
+    v->data.obj.size = 0;
+    v->data.obj.capacity = capacity;
+    v->data.obj.memb = capacity > 0 ? (cjson_member*)malloc(capacity * sizeof(cjson_member)) : NULL;
+}
+
 size_t cjson_get_object_size(const cjson_value* v) {
     assert(v != NULL && v->type == CJSON_OBJECT);
     return v->data.obj.size;
+}
+
+size_t cjson_get_object_capacity(const cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_OBJECT);
+    return v->data.obj.capacity;
+}
+
+void cjson_reserve_object(cjson_value* v, size_t capacity) {
+    assert(v != NULL && v->type == CJSON_OBJECT);
+    if (v->data.obj.capacity < capacity) {
+        v->data.obj.capacity = capacity;
+        v->data.obj.memb = (cjson_member*)realloc(v->data.arr.elem, capacity * sizeof(cjson_member));
+    }
+}
+
+void cjson_shrink_object(cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_OBJECT);
+    if (v->data.obj.capacity > v->data.obj.size) {
+        v->data.obj.capacity = v->data.obj.size;
+        v->data.obj.memb = (cjson_member*)realloc(v->data.obj.memb, v->data.obj.size * sizeof(cjson_member));
+    }
+}
+
+void cjson_clear_object(cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_OBJECT);
+    for(size_t i = 0; i < v->data.obj.size; ++i){
+        free(v->data.obj.memb[i].k);
+        cjson_free(&v->data.obj.memb[i].v);
+    }
+    v->data.obj.size = 0;
 }
 
 const char* cjson_get_object_key(const cjson_value* v, size_t index) {
@@ -551,8 +737,40 @@ size_t cjson_get_object_key_length(const cjson_value* v, size_t index) {
     return v->data.obj.memb[index].klen;
 }
 
-cjson_value* cjson_get_object_value(const cjson_value* v, size_t index) {
+cjson_value* cjson_get_object_value(cjson_value* v, size_t index) {
     assert(v != NULL && v->type == CJSON_OBJECT);
     assert(index < v->data.obj.size);
     return &v->data.obj.memb[index].v;
+}
+
+size_t cjson_find_object_index(const cjson_value* v, const char* key, size_t klen) {
+    assert(v != NULL && v->type == CJSON_OBJECT && key != NULL);
+    for (size_t i = 0; i < v->data.obj.size; ++i)
+        if (v->data.obj.memb[i].klen == klen && memcmp(v->data.obj.memb[i].k, key, klen) == 0)
+            return i;
+    return CJSON_KEY_NOT_EXIST;
+}
+
+cjson_value* cjson_find_object_value(cjson_value* v, const char* key, size_t klen) {
+    size_t index = cjson_find_object_index(v, key, klen);
+    return index != CJSON_KEY_NOT_EXIST ? &v->data.obj.memb[index].v : NULL;
+}
+
+cjson_value* cjson_set_object_value(cjson_value* v, const char* key, size_t klen) {
+    assert(v != NULL && v->type == CJSON_OBJECT && key != NULL);
+    if (v->data.obj.size == v->data.obj.capacity)
+        cjson_reserve_object(v, v->data.obj.capacity == 0 ? 1 : v->data.obj.capacity * 2);
+    memcpy(v->data.obj.memb[v->data.obj.size].k = (char*)malloc(klen + 1), key, klen);
+    v->data.obj.memb[v->data.obj.size].k[klen] = '\0';
+    v->data.obj.memb[v->data.obj.size].klen = klen;
+    cjson_init(&(v->data.obj.memb[v->data.obj.size].v));
+    return &v->data.obj.memb[v->data.obj.size++].v;
+}
+
+void cjson_remove_object_value(cjson_value* v, size_t index) {
+    assert(v != NULL && v->type == CJSON_OBJECT && index < v->data.obj.size);
+    free(v->data.obj.memb[index].k);
+    cjson_free(&(v->data.obj.memb[index].v));
+    memmove(&v->data.obj.memb[index], &v->data.obj.memb[index+1], sizeof(cjson_member)*(v->data.obj.size-index-1));
+    v->data.obj.size--;
 }
