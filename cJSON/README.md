@@ -8,6 +8,7 @@ A lightweight JSON parser writen in C.
 - [x] Add functionality of parsing the number type.
 - [x] Add functionality of parsing the normal string type.
 - [x] Add functionality of parsing the unicode string type.
+- [x] Add functionality of parsing the array type.
 
 ## Reference
 

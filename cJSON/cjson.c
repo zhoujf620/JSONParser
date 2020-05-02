@@ -1,4 +1,3 @@
-  
 #ifdef _WINDOWS
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
@@ -18,8 +17,8 @@ typedef struct {
     size_t size, top;
 }cjson_context;
 
-static void cjson_context_push(cjson_context* c, char ch) {
-    size_t size = sizeof(ch);
+static void* cjson_context_push(cjson_context* c, size_t size) {
+    void* ret;
     assert(size > 0);
     if (c->top + size >= c->size) {
         if (c->size == 0)
@@ -28,8 +27,14 @@ static void cjson_context_push(cjson_context* c, char ch) {
             c->size += c->size >> 1;  /* c->size * 1.5 */
         c->stack = (char*)realloc(c->stack, c->size);
     }
-    c->stack[c->top] = ch;
+    ret = c->stack + c->top;
     c->top += size;
+    return ret;
+}
+
+static void cjson_context_push_char(cjson_context* c, char ch) {
+    char* p = cjson_context_push(c, sizeof(char));
+    *p = ch;
 }
 
 static void* cjson_context_pop(cjson_context* c, size_t size) {
@@ -75,8 +80,8 @@ static int cjson_parse_number(cjson_context* c, cjson_value* v) {
     }
 
     errno = 0;
-    v->u.num = strtod(c->json, NULL);
-    if (errno == ERANGE && (v->u.num == HUGE_VAL || v->u.num == -HUGE_VAL))
+    v->data.num = strtod(c->json, NULL);
+    if (errno == ERANGE && (v->data.num == HUGE_VAL || v->data.num == -HUGE_VAL))
         return CJSON_PARSE_NUMBER_TOO_BIG;
     c->json = p;
     v->type = CJSON_NUMBER;
@@ -85,7 +90,7 @@ static int cjson_parse_number(cjson_context* c, cjson_value* v) {
 
 static const char* cjson_parse_hex4(const char* p, unsigned* u) {
     *u = 0;
-    for (int i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 4; ++i) {
         char ch = *p++;
         *u <<= 4;
         if      (ch >= '0' && ch <= '9') *u |= ch - '0';
@@ -97,23 +102,24 @@ static const char* cjson_parse_hex4(const char* p, unsigned* u) {
 }
 
 static void cjson_encode_utf8(cjson_context* c, unsigned u) {
-    if (u <= 0x7F) 
-        cjson_context_push(c, u & 0xFF);
+    if (u <= 0x7F) {
+        cjson_context_push_char(c, u & 0xFF);
+    }
     else if (u <= 0x7FF) {
-        cjson_context_push(c, 0xC0 | ((u >> 6) & 0xFF));
-        cjson_context_push(c, 0x80 | ( u       & 0x3F));
+        cjson_context_push_char(c, 0xC0 | ((u >> 6) & 0xFF));
+        cjson_context_push_char(c, 0x80 | ( u       & 0x3F));
     }
     else if (u <= 0xFFFF) {
-        cjson_context_push(c, 0xE0 | ((u >> 12) & 0xFF));
-        cjson_context_push(c, 0x80 | ((u >>  6) & 0x3F));
-        cjson_context_push(c, 0x80 | ( u        & 0x3F));
+        cjson_context_push_char(c, 0xE0 | ((u >> 12) & 0xFF));
+        cjson_context_push_char(c, 0x80 | ((u >>  6) & 0x3F));
+        cjson_context_push_char(c, 0x80 | ( u        & 0x3F));
     }
     else {
         assert(u <= 0x10FFFF);
-        cjson_context_push(c, 0xF0 | ((u >> 18) & 0xFF));
-        cjson_context_push(c, 0x80 | ((u >> 12) & 0x3F));
-        cjson_context_push(c, 0x80 | ((u >>  6) & 0x3F));
-        cjson_context_push(c, 0x80 | ( u        & 0x3F));
+        cjson_context_push_char(c, 0xF0 | ((u >> 18) & 0xFF));
+        cjson_context_push_char(c, 0x80 | ((u >> 12) & 0x3F));
+        cjson_context_push_char(c, 0x80 | ((u >>  6) & 0x3F));
+        cjson_context_push_char(c, 0x80 | ( u        & 0x3F));
     }
 }
 
@@ -122,9 +128,10 @@ static int cjson_parse_string(cjson_context* c, cjson_value* v) {
     unsigned u, u2;
 
     const char* p = c->json;
-    if (p[0] != ('\"')) return CJSON_PARSE_INVALID_VALUE;
+    if (*p == ('\"')) p++;
+    else return CJSON_PARSE_INVALID_VALUE;
     
-    for (p++;;) {
+    for (;;) {
         char ch = *p++;
         switch (ch) {
             case '\"':
@@ -134,14 +141,14 @@ static int cjson_parse_string(cjson_context* c, cjson_value* v) {
                 return CJSON_PARSE_OK;
             case '\\':
                 switch (*p++) {
-                case '\"': cjson_context_push(c, '\"'); break;
-                case '\\': cjson_context_push(c, '\\'); break;
-                case '/': cjson_context_push(c, '/'); break;
-                case 'b': cjson_context_push(c, '\b'); break;
-                case 'f': cjson_context_push(c, '\f'); break;
-                case 'n': cjson_context_push(c, '\n'); break;
-                case 'r': cjson_context_push(c, '\r'); break;
-                case 't': cjson_context_push(c, '\t'); break;
+                case '\"': cjson_context_push_char(c, '\"'); break;
+                case '\\': cjson_context_push_char(c, '\\'); break;
+                case '/': cjson_context_push_char(c, '/'); break;
+                case 'b': cjson_context_push_char(c, '\b'); break;
+                case 'f': cjson_context_push_char(c, '\f'); break;
+                case 'n': cjson_context_push_char(c, '\n'); break;
+                case 'r': cjson_context_push_char(c, '\r'); break;
+                case 't': cjson_context_push_char(c, '\t'); break;
                 case 'u': 
                     if (!(p = cjson_parse_hex4(p, &u))) {
                         c->top = head;
@@ -181,18 +188,68 @@ static int cjson_parse_string(cjson_context* c, cjson_value* v) {
                     c->top = head;
                     return CJSON_PARSE_INVALID_STRING_CHAR;
                 }
-                cjson_context_push(c, ch);
+                cjson_context_push_char(c, ch);
         }
     }
 }
 
-int cjson_parse_value(cjson_context* c, cjson_value* v) {
+static int cjson_parse_value(cjson_context* c, cjson_value* v);
+
+static int cjson_parse_array(cjson_context* c, cjson_value* v) {
+    size_t size = 0;
+    int ret;
+
+    if (*c->json == '[') c->json++;
+    else return CJSON_PARSE_INVALID_VALUE;
+
+    cjson_parse_whitespace(c);
+    if (*c->json == ']') {
+        c->json++;
+        v->type = CJSON_ARRAY;
+        v->data.arr.size = 0;
+        v->data.arr.elem = NULL;
+        return CJSON_PARSE_OK;
+    }
+    for (;;) {
+        cjson_value e;
+        cjson_init(&e);
+        if ((ret = cjson_parse_value(c, &e)) != CJSON_PARSE_OK)
+            break;
+        memcpy(cjson_context_push(c, sizeof(cjson_value)), &e, sizeof(cjson_value));
+        size++;
+        
+        cjson_parse_whitespace(c);
+        if (*c->json == ',') {
+            c->json++;
+            cjson_parse_whitespace(c);
+        }
+        else if (*c->json == ']') {
+            c->json++;
+            v->type = CJSON_ARRAY;
+            v->data.arr.size = size;
+            size *= sizeof(cjson_value);
+            memcpy(v->data.arr.elem = (cjson_value*)malloc(size), cjson_context_pop(c, size), size);
+            return CJSON_PARSE_OK;
+        }
+        else {
+            ret = CJSON_PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
+            break;
+        }
+    }
+    /* Pop and free values on the stack */
+    for (size_t i = 0; i < size; i++)
+        cjson_free((cjson_value*)cjson_context_pop(c, sizeof(cjson_value)));
+    return ret;
+}
+
+static int cjson_parse_value(cjson_context* c, cjson_value* v) {
     switch (*c->json) {
         case 't':  return cjson_parse_literal(c, v, "true", CJSON_TRUE);
         case 'f':  return cjson_parse_literal(c, v, "false", CJSON_FALSE);
         case 'n':  return cjson_parse_literal(c, v, "null", CJSON_NULL);
         default:   return cjson_parse_number(c, v);
         case '"':  return cjson_parse_string(c, v);
+        case '[':  return cjson_parse_array(c, v);
         case '\0': return CJSON_PARSE_EXPECT_VALUE;
     }
 }
@@ -223,8 +280,17 @@ int cjson_parse(cjson_value* v, const char* json) {
 
 void cjson_free(cjson_value* v) {
     assert(v != NULL);
-    if (v->type == CJSON_STRING)
-        free(v->u.str.s);
+    switch (v->type) {
+        case CJSON_STRING:
+            free(v->data.str.s);
+            break;
+        case CJSON_ARRAY:
+            for (size_t i = 0; i < v->data.arr.size; ++i)
+                cjson_free(&v->data.arr.elem[i]);
+            free(v->data.arr.elem);
+            break;
+        default: break;
+    }
     v->type = CJSON_NULL;
 }
 
@@ -249,31 +315,42 @@ void cjson_set_boolean(cjson_value* v, int b) {
 
 double cjson_get_number(const cjson_value* v) {
     assert(v != NULL && v->type == CJSON_NUMBER);
-    return v->u.num;
+    return v->data.num;
 }
 
 void cjson_set_number(cjson_value* v, double n) {
     cjson_free(v);
-    v->u.num = n;
+    v->data.num = n;
     v->type = CJSON_NUMBER;
 }
 
 const char* cjson_get_string(const cjson_value* v) {
     assert(v != NULL && v->type == CJSON_STRING);
-    return v->u.str.s;
+    return v->data.str.s;
 }
 
 size_t cjson_get_string_length(const cjson_value* v) {
     assert(v != NULL && v->type == CJSON_STRING);
-    return v->u.str.len;
+    return v->data.str.len;
 }
 
 void cjson_set_string(cjson_value* v, const char* s, size_t len) {
     assert(v != NULL && (s != NULL || len == 0));
     cjson_free(v);
-    v->u.str.s = (char*)malloc(len + 1);
-    memcpy(v->u.str.s, s, len);
-    v->u.str.s[len] = '\0';
-    v->u.str.len = len;
+    v->data.str.s = (char*)malloc(len + 1);
+    memcpy(v->data.str.s, s, len);
+    v->data.str.s[len] = '\0';
+    v->data.str.len = len;
     v->type = CJSON_STRING;
+}
+
+size_t cjson_get_array_size(const cjson_value* v) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    return v->data.arr.size;
+}
+
+const cjson_value* cjson_get_array_element(const cjson_value* v, size_t index) {
+    assert(v != NULL && v->type == CJSON_ARRAY);
+    assert(index < v->data.arr.size);
+    return &v->data.arr.elem[index];
 }
