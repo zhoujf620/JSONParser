@@ -14,14 +14,21 @@ typedef enum {
 } cjson_type;
 
 typedef struct cjson_value cjson_value;
+typedef struct cjson_member cjson_member;
 
 struct cjson_value {
     union {
+        struct {cjson_member* memb; size_t size;} obj;
         struct {cjson_value* elem; size_t size;} arr; /* array:  elements, element count */
         struct {char* s; size_t len;} str;           /* string: null-terminated string, string length */
         double num;                                   /* number */
     } data;
     cjson_type type;
+};
+
+struct cjson_member {
+    char* k; size_t klen;   /* member key string, key string length */
+    cjson_value v;           /* member value */
 };
 
 enum {
@@ -35,10 +42,13 @@ enum {
     CJSON_PARSE_INVALID_STRING_CHAR,
     CJSON_PARSE_INVALID_UNICODE_HEX,
     CJSON_PARSE_INVALID_UNICODE_SURROGATE,
-    CJSON_PARSE_MISS_COMMA_OR_SQUARE_BRACKET
+    CJSON_PARSE_MISS_COMMA_OR_SQUARE_BRACKET,
+    CJSON_PARSE_MISS_KEY,
+    CJSON_PARSE_MISS_COLON,
+    CJSON_PARSE_MISS_COMMA_OR_CURLY_BRACKET
 };
 
-#define cjson_init(v) do { (v)->type = CJSON_NULL; } while(0)
+#define cjson_init(v) do {(v)->type = CJSON_NULL;} while(0)
 
 int cjson_parse(cjson_value* v, const char* json);
 
@@ -60,5 +70,10 @@ void cjson_set_string(cjson_value* v, const char* s, size_t len);
 
 size_t cjson_get_array_size(const cjson_value* v);
 const cjson_value* cjson_get_array_element(const cjson_value* v, size_t index);
+
+size_t cjson_get_object_size(const cjson_value* v);
+const char* cjson_get_object_key(const cjson_value* v, size_t index);
+size_t cjson_get_object_key_length(const cjson_value* v, size_t index);
+cjson_value* cjson_get_object_value(const cjson_value* v, size_t index);
 
 #endif
