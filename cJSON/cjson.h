@@ -21,10 +21,10 @@ typedef struct cjson_member cjson_member;
 struct cjson_value {
     union {
         struct {cjson_member* memb; size_t size, capacity;} obj; /* object: members, member count, capacity */
-        struct {cjson_value*  elem; size_t size, capacity;} arr; /* array:  elements, element count, capacity */
+        struct {cjson_value* elem; size_t size, capacity;} arr; /* array:  elements, element count, capacity */
         struct {char* s; size_t len;} str;                   /* string: null-terminated string, string length */
         double num;                                           /* number */
-    }data;
+    } data;
     cjson_type type;
 };
 
